@@ -76,8 +76,9 @@ def get_leaderboard_positions():
             positions = data2["data"].get("otherPositionRetList", [])
             return {p["symbol"]: p for p in positions}
             
-        print(f"[Leaderboard] Response: {data}")
-        return {}
+            print(f"[Leaderboard] Response v1: {data}")
+            print(f"[Leaderboard] Response v2: {data2}")
+            return {}
         
     except Exception as e:
         print(f"[Error get_leaderboard_positions] {e}")
