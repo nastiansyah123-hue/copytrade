@@ -13,21 +13,22 @@ import time
 import threading
 import hashlib
 import hmac
+import os
 from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
 
 # =============================================
-# KONFIGURASI — ISI DI SINI
+# KONFIGURASI — diisi lewat Railway Environment Variables
 # =============================================
 CONFIG = {
-    "binance_api_key": "ISI_API_KEY_KAMU",
-    "binance_secret":  "ISI_SECRET_KEY_KAMU",
-    "telegram_token":  "ISI_TELEGRAM_BOT_TOKEN",
-    "telegram_chat_id":"ISI_CHAT_ID_TELEGRAM",  # bisa group/channel
-    "poll_interval":   15,   # detik antar polling
-    "testnet":         False  # True kalau pakai testnet Binance
+    "binance_api_key": os.environ.get("BINANCE_API_KEY", ""),
+    "binance_secret":  os.environ.get("BINANCE_SECRET", ""),
+    "telegram_token":  os.environ.get("TELEGRAM_TOKEN", ""),
+    "telegram_chat_id":os.environ.get("TELEGRAM_CHAT_ID", ""),
+    "poll_interval":   int(os.environ.get("POLL_INTERVAL", "15")),
+    "testnet":         False
 }
 # =============================================
 
@@ -226,4 +227,5 @@ if __name__ == '__main__':
     print("  Binance CopyTrade Monitor")
     print("  http://localhost:5000")
     print("=" * 50)
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
