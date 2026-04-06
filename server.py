@@ -240,11 +240,23 @@ def test_telegram():
 
 @app.route('/api/debug')
 def debug():
-    positions = get_copy_positions()
-    return jsonify({
-        "total": len(positions),
-        "positions": list(positions.values())
-    })
+    try:
+        import hmac, hashlib, time
+        api_key = os.environ.get("BINANCE_API_KEY", "")
+        secret = os.environ.get("BINANCE_SECRET", "")
+        timestamp = int(time.time() * 1000)
+        params = f"timestamp={timestamp}"
+        signature = hmac.new(
+            secret.encode('utf-8'),
+            params.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        url = f"https://api.binance.com/sapi/v1/copyTrading/futures/currentCopyTrade?{params}&signature={signature}"
+        headers = {"X-MBX-APIKEY": api_key}
+        r = requests.get(url, headers=headers, timeout=10)
+        return jsonify({"status": r.status_code, "raw": r.json()})
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 @app.route('/api/myip')
 def myip():
