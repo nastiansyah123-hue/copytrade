@@ -36,7 +36,13 @@ def get_headers():
         "content-type": "application/json",
         "csrftoken": CONFIG["csrftoken"],
         "cookie": CONFIG["cookie"],
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        "fvideo-id": os.environ.get("BINANCE_FVIDEO_ID", ""),
+        "fvideo-token": os.environ.get("BINANCE_FVIDEO_TOKEN", ""),
+        "user-agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Mobile Safari/537.36",
+        "referer": "https://www.binance.com/id/copy-trading/copy-management",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
     }
 
 def send_telegram(message):
