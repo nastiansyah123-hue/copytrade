@@ -215,6 +215,12 @@ def config():
             for k, v in CONFIG.items()}
     return jsonify(safe)
 
+@app.route('/api/myip')
+def myip():
+    import urllib.request
+    ip = urllib.request.urlopen('https://api.ipify.org').read().decode()
+    return jsonify({"ip": ip})
+
 @app.route('/api/test/telegram', methods=['POST'])
 def test_telegram():
     result = send_telegram("✅ <b>Test berhasil!</b>\nBot monitor terhubung ke Telegram.")
