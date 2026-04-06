@@ -215,6 +215,18 @@ def config():
             for k, v in CONFIG.items()}
     return jsonify(safe)
 
+@app.route('/api/copytrade')
+def copytrade():
+    try:
+        client = get_client()
+        result = client._request_futures_api(
+            'get', 'copyTrading/futures/position', True
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
 @app.route('/api/debug')
 def debug():
     try:
