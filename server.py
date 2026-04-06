@@ -272,3 +272,15 @@ def debug():
         })
     except Exception as e:
         return jsonify({"error": str(e)})
+
+@app.route('/api/copytrade')
+def copytrade():
+    try:
+        client = get_client()
+        # Coba endpoint portfolio margin / copytrading
+        result = client._request_futures_api(
+            'get', 'copyTrading/futures/position', True
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)})
