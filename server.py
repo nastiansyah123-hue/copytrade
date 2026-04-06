@@ -1,5 +1,5 @@
 """
-Binance CopyTrade Position Monitor - Leaderboard Scraper
+Binance CopyTrade Position Monitor - Cookie Session
 """
 
 from flask import Flask, jsonify, request
@@ -13,16 +13,13 @@ from datetime import datetime
 app = Flask(__name__)
 CORS(app)
 
-# =============================================
-# KONFIGURASI
-# =============================================
 CONFIG = {
-    "portfolio_id":    os.environ.get("PORTFOLIO_ID", "4954336430193681152"),
     "telegram_token":  os.environ.get("TELEGRAM_TOKEN", ""),
     "telegram_chat_id":os.environ.get("TELEGRAM_CHAT_ID", ""),
     "poll_interval":   int(os.environ.get("POLL_INTERVAL", "30")),
+    "cookie":          os.environ.get("BINANCE_COOKIE", ""),
+    "csrftoken":       os.environ.get("BINANCE_CSRF", ""),
 }
-# =============================================
 
 previous_positions = {}
 monitor_active = False
@@ -31,85 +28,103 @@ monitor_thread = None
 def send_telegram(message):
     try:
         url = f"https://api.telegram.org/bot{CONFIG['telegram_token']}/sendMessage"
-        payload = {
-            "chat_id": CONFIG["telegram_chat_id"],
-            "text": message,
-            "parse_mode": "HTML"
-        }
+        payload = {"chat_id": CONFIG["telegram_chat_id"], "text": message, "parse_mode": "HTML"}
         r = requests.post(url, json=payload, timeout=10)
         return r.json()
     except Exception as e:
         print(f"[Telegram Error] {e}")
         return None
 
-def get_leaderboard_positions():
-    """Ambil posisi trader dari Binance Leaderboard"""
+def get_copy_positions():
+    """Ambil posisi CopyTrade yang sedang berlangsung"""
     try:
-        portfolio_id = CONFIG["portfolio_id"]
-        url = "https://www.binance.com/bapi/futures/v2/private/future/leaderboard/getOtherPosition"
-        
+        url = "https://www.binance.com/bapi/futures/v1/private/future/copy-trade/copy-portfolio/detail-list?ongoing=true"
         headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "accept": "*/*",
+            "accept-language": "id",
+            "bnc-location": "ID",
+            "bnc-time-zone": "Asia/Jakarta",
+            "bnc-uuid": "8eea9e11-4fd7-41de-b6f4-0d7840d5a1bb",
             "clienttype": "web",
-            "lang": "en"
+            "content-type": "application/json",
+            "csrftoken": CONFIG["csrftoken"],
+            "cookie": CONFIG["cookie"],
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
         }
-        
-        payload = {
-            "encryptedUid": portfolio_id,
-            "tradeType": "PERPETUAL"
-        }
-        
-        r = requests.post(url, json=payload, headers=headers, timeout=15)
+        r = requests.get(url, headers=headers, timeout=15)
         data = r.json()
-        
+
         if data.get("code") == "000000" and data.get("data"):
-            positions = data["data"].get("otherPositionRetList", [])
-            return {p["symbol"]: p for p in positions}
-        
-        # Coba endpoint alternatif
-        url2 = "https://www.binance.com/bapi/futures/v1/public/future/leaderboard/getOtherPosition"
-        r2 = requests.post(url2, json=payload, headers=headers, timeout=15)
-        data2 = r2.json()
-        
-        if data2.get("code") == "000000" and data2.get("data"):
-            positions = data2["data"].get("otherPositionRetList", [])
-            return {p["symbol"]: p for p in positions}
-            
-            print(f"[Leaderboard] Response v1: {data}")
-            print(f"[Leaderboard] Response v2: {data2}")
+            portfolios = data["data"]
+            # Ambil posisi dari setiap portfolio yang ongoing
+            all_positions = {}
+            for portfolio in portfolios:
+                portfolio_id = portfolio.get("copyPortfolioId")
+                if portfolio_id:
+                    positions = get_portfolio_positions(portfolio_id)
+                    for p in positions:
+                        symbol = p.get("symbol", "")
+                        if symbol:
+                            all_positions[symbol] = p
+            return all_positions
+        else:
+            print(f"[CopyTrade] Response: {data}")
             return {}
-        
     except Exception as e:
-        print(f"[Error get_leaderboard_positions] {e}")
+        print(f"[Error get_copy_positions] {e}")
         return {}
 
+def get_portfolio_positions(portfolio_id):
+    """Ambil detail posisi dari satu portfolio"""
+    try:
+        url = f"https://www.binance.com/bapi/futures/v1/private/future/copy-trade/copy-portfolio/position-list?copyPortfolioId={portfolio_id}"
+        headers = {
+            "accept": "*/*",
+            "accept-language": "id",
+            "bnc-location": "ID",
+            "bnc-time-zone": "Asia/Jakarta",
+            "bnc-uuid": "8eea9e11-4fd7-41de-b6f4-0d7840d5a1bb",
+            "clienttype": "web",
+            "content-type": "application/json",
+            "csrftoken": CONFIG["csrftoken"],
+            "cookie": CONFIG["cookie"],
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+        }
+        r = requests.get(url, headers=headers, timeout=15)
+        data = r.json()
+        if data.get("code") == "000000" and data.get("data"):
+            return data["data"] if isinstance(data["data"], list) else []
+        return []
+    except Exception as e:
+        print(f"[Error get_portfolio_positions] {e}")
+        return []
+
 def format_open(pos):
-    side = "LONG 📈" if pos.get("amount", 0) > 0 else "SHORT 📉"
+    amount = float(pos.get("amount", pos.get("positionAmt", 0)))
+    side = "LONG 📈" if amount > 0 else "SHORT 📉"
     symbol = pos.get("symbol", "?")
     entry = float(pos.get("entryPrice", 0))
-    amount = abs(float(pos.get("amount", 0)))
+    amt = abs(amount)
+    pnl = float(pos.get("pnl", pos.get("unrealizedProfit", 0)))
     leverage = pos.get("leverage", "?")
-    pnl = float(pos.get("pnl", 0))
-    roe = float(pos.get("roe", 0)) * 100
     ts = datetime.now().strftime("%H:%M:%S")
     return (
         f"🟢 <b>OPEN {side}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📌 <b>{symbol}</b>\n"
         f"💰 Entry: <b>${entry:,.4f}</b>\n"
-        f"📦 Size: <b>{amount}</b>\n"
+        f"📦 Size: <b>{amt}</b>\n"
         f"⚡ Leverage: <b>{leverage}x</b>\n"
-        f"📊 PnL: <b>${pnl:+.2f}</b> ({roe:+.2f}%)\n"
+        f"📊 PnL: <b>${pnl:+.2f}</b>\n"
         f"🕐 {ts}"
     )
 
 def format_close(prev):
-    side = "LONG" if float(prev.get("amount", 0)) > 0 else "SHORT"
+    amount = float(prev.get("amount", prev.get("positionAmt", 0)))
+    side = "LONG" if amount > 0 else "SHORT"
     symbol = prev.get("symbol", "?")
     entry = float(prev.get("entryPrice", 0))
-    pnl = float(prev.get("pnl", 0))
-    roe = float(prev.get("roe", 0)) * 100
+    pnl = float(prev.get("pnl", prev.get("unrealizedProfit", 0)))
     emoji = "✅" if pnl >= 0 else "❌"
     ts = datetime.now().strftime("%H:%M:%S")
     return (
@@ -117,13 +132,13 @@ def format_close(prev):
         f"━━━━━━━━━━━━━━━\n"
         f"📌 <b>{symbol}</b>\n"
         f"💰 Entry was: <b>${entry:,.4f}</b>\n"
-        f"📊 PnL: <b>${pnl:+.2f}</b> ({roe:+.2f}%)\n"
+        f"📊 PnL: <b>${pnl:+.2f}</b>\n"
         f"🕐 {ts}"
     )
 
 def format_size_change(pos, prev):
-    old_amt = abs(float(prev.get("amount", 0)))
-    new_amt = abs(float(pos.get("amount", 0)))
+    old_amt = abs(float(prev.get("amount", prev.get("positionAmt", 0))))
+    new_amt = abs(float(pos.get("amount", pos.get("positionAmt", 0))))
     diff = new_amt - old_amt
     direction = "➕ Tambah size" if diff > 0 else "➖ Kurang size"
     symbol = pos.get("symbol", "?")
@@ -138,10 +153,9 @@ def format_size_change(pos, prev):
 
 def check_positions():
     global previous_positions
-    current = get_leaderboard_positions()
+    current = get_copy_positions()
     changes = []
 
-    # Deteksi open posisi baru
     for symbol, pos in current.items():
         if symbol not in previous_positions:
             msg = format_open(pos)
@@ -150,15 +164,14 @@ def check_positions():
             print(f"[OPEN] {symbol}")
         else:
             prev = previous_positions[symbol]
-            old_amt = abs(float(prev.get("amount", 0)))
-            new_amt = abs(float(pos.get("amount", 0)))
+            old_amt = abs(float(prev.get("amount", prev.get("positionAmt", 0))))
+            new_amt = abs(float(pos.get("amount", pos.get("positionAmt", 0))))
             if abs(old_amt - new_amt) > 0.0001:
                 msg = format_size_change(pos, prev)
                 send_telegram(msg)
                 changes.append({"type": "size_change", "symbol": symbol})
                 print(f"[SIZE CHANGE] {symbol}")
 
-    # Deteksi close posisi
     for symbol, prev in previous_positions.items():
         if symbol not in current:
             msg = format_close(prev)
@@ -172,15 +185,11 @@ def check_positions():
 def monitor_loop():
     global monitor_active
     print(f"[Monitor] Mulai polling setiap {CONFIG['poll_interval']} detik...")
-    send_telegram("🤖 <b>Bot Monitor aktif!</b>\nMemantau posisi trader CopyTrade...")
+    send_telegram("🤖 <b>Bot Monitor aktif!</b>\nMemantau posisi CopyTrade kamu...")
     while monitor_active:
         check_positions()
         time.sleep(CONFIG['poll_interval'])
     send_telegram("⏹ <b>Bot Monitor dihentikan.</b>")
-
-# =============================================
-# API Endpoints
-# =============================================
 
 @app.route('/')
 def home():
@@ -222,18 +231,6 @@ def stop_monitor():
     monitor_active = False
     return jsonify({"success": True, "message": "Monitor dihentikan"})
 
-@app.route('/api/config', methods=['GET', 'POST'])
-def config():
-    if request.method == 'POST':
-        data = request.json
-        for key in ['telegram_token', 'telegram_chat_id', 'poll_interval', 'portfolio_id']:
-            if key in data:
-                CONFIG[key] = data[key]
-        return jsonify({"success": True})
-    safe = {k: (v[:6]+"****" if k in ['telegram_token'] else v)
-            for k, v in CONFIG.items()}
-    return jsonify(safe)
-
 @app.route('/api/test/telegram', methods=['POST'])
 def test_telegram():
     result = send_telegram("✅ <b>Test berhasil!</b>\nBot monitor terhubung ke Telegram.")
@@ -243,7 +240,7 @@ def test_telegram():
 
 @app.route('/api/debug')
 def debug():
-    positions = get_leaderboard_positions()
+    positions = get_copy_positions()
     return jsonify({
         "total": len(positions),
         "positions": list(positions.values())
