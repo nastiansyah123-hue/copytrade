@@ -215,6 +215,21 @@ def config():
             for k, v in CONFIG.items()}
     return jsonify(safe)
 
+@app.route('/api/debug')
+def debug():
+    try:
+        client = get_client()
+        positions = client.futures_position_information()
+        account = client.futures_account()
+        return jsonify({
+            "total_positions": len(positions),
+            "active": [p for p in positions if float(p['positionAmt']) != 0],
+            "totalWalletBalance": account.get('totalWalletBalance'),
+            "totalUnrealizedProfit": account.get('totalUnrealizedProfit')
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 @app.route('/api/myip')
 def myip():
     import urllib.request
