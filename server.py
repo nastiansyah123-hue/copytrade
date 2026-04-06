@@ -1,18 +1,12 @@
 """
-Binance CopyTrade Position Monitor - Backend Server
-Jalankan: pip install flask flask-cors python-binance requests
-Lalu: python server.py
+Binance CopyTrade Position Monitor - Leaderboard Scraper
 """
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from binance.client import Client
 import requests
-import json
 import time
 import threading
-import hashlib
-import hmac
 import os
 from datetime import datetime
 
@@ -20,29 +14,21 @@ app = Flask(__name__)
 CORS(app)
 
 # =============================================
-# KONFIGURASI — diisi lewat Railway Environment Variables
+# KONFIGURASI
 # =============================================
 CONFIG = {
-    "binance_api_key": os.environ.get("BINANCE_API_KEY", ""),
-    "binance_secret":  os.environ.get("BINANCE_SECRET", ""),
+    "portfolio_id":    os.environ.get("PORTFOLIO_ID", "4954336430193681152"),
     "telegram_token":  os.environ.get("TELEGRAM_TOKEN", ""),
     "telegram_chat_id":os.environ.get("TELEGRAM_CHAT_ID", ""),
-    "poll_interval":   int(os.environ.get("POLL_INTERVAL", "15")),
-    "testnet":         False
+    "poll_interval":   int(os.environ.get("POLL_INTERVAL", "30")),
 }
 # =============================================
 
-# State penyimpanan posisi sebelumnya
 previous_positions = {}
 monitor_active = False
 monitor_thread = None
 
-def get_client():
-    return Client(CONFIG["binance_api_key"], CONFIG["binance_secret"],
-                  testnet=CONFIG["testnet"])
-
 def send_telegram(message):
-    """Kirim pesan ke Telegram"""
     try:
         url = f"https://api.telegram.org/bot{CONFIG['telegram_token']}/sendMessage"
         payload = {
@@ -56,51 +42,91 @@ def send_telegram(message):
         print(f"[Telegram Error] {e}")
         return None
 
-def format_position_open(pos):
-    side = "LONG 📈" if float(pos['positionAmt']) > 0 else "SHORT 📉"
-    amt  = abs(float(pos['positionAmt']))
-    entry = float(pos['entryPrice'])
-    pnl   = float(pos.get('unrealizedProfit', 0))
-    lev   = pos.get('leverage', '?')
-    symbol = pos['symbol']
-    ts = datetime.now().strftime("%H:%M:%S")
+def get_leaderboard_positions():
+    """Ambil posisi trader dari Binance Leaderboard"""
+    try:
+        portfolio_id = CONFIG["portfolio_id"]
+        url = "https://www.binance.com/bapi/futures/v2/private/future/leaderboard/getOtherPosition"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "clienttype": "web",
+            "lang": "en"
+        }
+        
+        payload = {
+            "encryptedUid": portfolio_id,
+            "tradeType": "PERPETUAL"
+        }
+        
+        r = requests.post(url, json=payload, headers=headers, timeout=15)
+        data = r.json()
+        
+        if data.get("code") == "000000" and data.get("data"):
+            positions = data["data"].get("otherPositionRetList", [])
+            return {p["symbol"]: p for p in positions}
+        
+        # Coba endpoint alternatif
+        url2 = "https://www.binance.com/bapi/futures/v1/public/future/leaderboard/getOtherPosition"
+        r2 = requests.post(url2, json=payload, headers=headers, timeout=15)
+        data2 = r2.json()
+        
+        if data2.get("code") == "000000" and data2.get("data"):
+            positions = data2["data"].get("otherPositionRetList", [])
+            return {p["symbol"]: p for p in positions}
+            
+        print(f"[Leaderboard] Response: {data}")
+        return {}
+        
+    except Exception as e:
+        print(f"[Error get_leaderboard_positions] {e}")
+        return {}
 
+def format_open(pos):
+    side = "LONG 📈" if pos.get("amount", 0) > 0 else "SHORT 📉"
+    symbol = pos.get("symbol", "?")
+    entry = float(pos.get("entryPrice", 0))
+    amount = abs(float(pos.get("amount", 0)))
+    leverage = pos.get("leverage", "?")
+    pnl = float(pos.get("pnl", 0))
+    roe = float(pos.get("roe", 0)) * 100
+    ts = datetime.now().strftime("%H:%M:%S")
     return (
         f"🟢 <b>OPEN {side}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📌 <b>{symbol}</b>\n"
         f"💰 Entry: <b>${entry:,.4f}</b>\n"
-        f"📦 Size: <b>{amt}</b>\n"
-        f"⚡ Leverage: <b>{lev}x</b>\n"
-        f"📊 uPnL: <b>${pnl:+.2f}</b>\n"
+        f"📦 Size: <b>{amount}</b>\n"
+        f"⚡ Leverage: <b>{leverage}x</b>\n"
+        f"📊 PnL: <b>${pnl:+.2f}</b> ({roe:+.2f}%)\n"
         f"🕐 {ts}"
     )
 
-def format_position_close(pos, prev):
-    side = "LONG" if float(prev['positionAmt']) > 0 else "SHORT"
-    pnl  = float(prev.get('unrealizedProfit', 0))
+def format_close(prev):
+    side = "LONG" if float(prev.get("amount", 0)) > 0 else "SHORT"
+    symbol = prev.get("symbol", "?")
+    entry = float(prev.get("entryPrice", 0))
+    pnl = float(prev.get("pnl", 0))
+    roe = float(prev.get("roe", 0)) * 100
     emoji = "✅" if pnl >= 0 else "❌"
-    symbol = prev['symbol']
-    entry  = float(prev['entryPrice'])
     ts = datetime.now().strftime("%H:%M:%S")
-
     return (
         f"🔴 <b>CLOSE {side}</b> {emoji}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📌 <b>{symbol}</b>\n"
         f"💰 Entry was: <b>${entry:,.4f}</b>\n"
-        f"📊 PnL akhir: <b>${pnl:+.2f}</b>\n"
+        f"📊 PnL: <b>${pnl:+.2f}</b> ({roe:+.2f}%)\n"
         f"🕐 {ts}"
     )
 
 def format_size_change(pos, prev):
-    old_amt = abs(float(prev['positionAmt']))
-    new_amt = abs(float(pos['positionAmt']))
-    diff    = new_amt - old_amt
+    old_amt = abs(float(prev.get("amount", 0)))
+    new_amt = abs(float(pos.get("amount", 0)))
+    diff = new_amt - old_amt
     direction = "➕ Tambah size" if diff > 0 else "➖ Kurang size"
-    symbol = pos['symbol']
+    symbol = pos.get("symbol", "?")
     ts = datetime.now().strftime("%H:%M:%S")
-
     return (
         f"🔄 <b>{direction}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -110,61 +136,54 @@ def format_size_change(pos, prev):
     )
 
 def check_positions():
-    """Ambil posisi aktif dari Binance Futures"""
     global previous_positions
-    try:
-        client = get_client()
-        positions = client.futures_position_information()
-        # Filter hanya yang ada posisi aktif
-        active = {p['symbol']: p for p in positions if abs(float(p['positionAmt'])) > 0}
+    current = get_leaderboard_positions()
+    changes = []
 
-        changes = []
-
-        # Deteksi open posisi baru
-        for symbol, pos in active.items():
-            if symbol not in previous_positions:
-                msg = format_position_open(pos)
+    # Deteksi open posisi baru
+    for symbol, pos in current.items():
+        if symbol not in previous_positions:
+            msg = format_open(pos)
+            send_telegram(msg)
+            changes.append({"type": "open", "symbol": symbol})
+            print(f"[OPEN] {symbol}")
+        else:
+            prev = previous_positions[symbol]
+            old_amt = abs(float(prev.get("amount", 0)))
+            new_amt = abs(float(pos.get("amount", 0)))
+            if abs(old_amt - new_amt) > 0.0001:
+                msg = format_size_change(pos, prev)
                 send_telegram(msg)
-                changes.append({"type": "open", "symbol": symbol, "position": pos})
-                print(f"[OPEN] {symbol}")
+                changes.append({"type": "size_change", "symbol": symbol})
+                print(f"[SIZE CHANGE] {symbol}")
 
-            else:
-                prev = previous_positions[symbol]
-                old_amt = abs(float(prev['positionAmt']))
-                new_amt = abs(float(pos['positionAmt']))
-                if abs(old_amt - new_amt) > 0.0001:
-                    msg = format_size_change(pos, prev)
-                    send_telegram(msg)
-                    changes.append({"type": "size_change", "symbol": symbol})
-                    print(f"[SIZE CHANGE] {symbol}")
+    # Deteksi close posisi
+    for symbol, prev in previous_positions.items():
+        if symbol not in current:
+            msg = format_close(prev)
+            send_telegram(msg)
+            changes.append({"type": "close", "symbol": symbol})
+            print(f"[CLOSE] {symbol}")
 
-        # Deteksi close posisi
-        for symbol, prev in previous_positions.items():
-            if symbol not in active:
-                msg = format_position_close(None, prev)
-                send_telegram(msg)
-                changes.append({"type": "close", "symbol": symbol})
-                print(f"[CLOSE] {symbol}")
-
-        previous_positions = active
-        return active, changes
-
-    except Exception as e:
-        print(f"[Error check_positions] {e}")
-        return {}, []
+    previous_positions = current
+    return current, changes
 
 def monitor_loop():
     global monitor_active
     print(f"[Monitor] Mulai polling setiap {CONFIG['poll_interval']} detik...")
-    send_telegram("🤖 <b>Bot Monitor aktif!</b>\nMemantau posisi CopyTrade kamu...")
+    send_telegram("🤖 <b>Bot Monitor aktif!</b>\nMemantau posisi trader CopyTrade...")
     while monitor_active:
         check_positions()
         time.sleep(CONFIG['poll_interval'])
     send_telegram("⏹ <b>Bot Monitor dihentikan.</b>")
 
 # =============================================
-# API Endpoints untuk dashboard HTML
+# API Endpoints
 # =============================================
+
+@app.route('/')
+def home():
+    return jsonify({"status": "CopyTrade Monitor running!"})
 
 @app.route('/api/status')
 def status():
@@ -206,57 +225,13 @@ def stop_monitor():
 def config():
     if request.method == 'POST':
         data = request.json
-        for key in ['binance_api_key', 'binance_secret', 'telegram_token', 'telegram_chat_id', 'poll_interval']:
+        for key in ['telegram_token', 'telegram_chat_id', 'poll_interval', 'portfolio_id']:
             if key in data:
                 CONFIG[key] = data[key]
         return jsonify({"success": True})
-    # GET — jangan return secret key secara penuh
-    safe = {k: (v[:6]+"****" if k in ['binance_api_key','binance_secret','telegram_token'] else v)
+    safe = {k: (v[:6]+"****" if k in ['telegram_token'] else v)
             for k, v in CONFIG.items()}
     return jsonify(safe)
-
-@app.route('/api/copytrade')
-def copytrade():
-    try:
-        import hmac, hashlib, time
-        api_key = CONFIG['binance_api_key']
-        secret = CONFIG['binance_secret']
-        
-        timestamp = int(time.time() * 1000)
-        params = f"timestamp={timestamp}"
-        signature = hmac.new(
-            secret.encode('utf-8'),
-            params.encode('utf-8'),
-            hashlib.sha256
-        ).hexdigest()
-        
-        url = f"https://api.binance.com/sapi/v1/copyTrading/futures/positions?{params}&signature={signature}"
-        headers = {"X-MBX-APIKEY": api_key}
-        r = requests.get(url, headers=headers, timeout=10)
-        return jsonify({"status": r.status_code, "raw": r.text})
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-@app.route('/api/debug')
-def debug():
-    try:
-        client = get_client()
-        positions = client.futures_position_information()
-        account = client.futures_account()
-        return jsonify({
-            "total_positions": len(positions),
-            "active": [p for p in positions if float(p['positionAmt']) != 0],
-            "totalWalletBalance": account.get('totalWalletBalance'),
-            "totalUnrealizedProfit": account.get('totalUnrealizedProfit')
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-@app.route('/api/myip')
-def myip():
-    import urllib.request
-    ip = urllib.request.urlopen('https://api.ipify.org').read().decode()
-    return jsonify({"ip": ip})
 
 @app.route('/api/test/telegram', methods=['POST'])
 def test_telegram():
@@ -265,44 +240,24 @@ def test_telegram():
         return jsonify({"success": True, "message": "Pesan test terkirim!"})
     return jsonify({"success": False, "message": str(result)})
 
-if __name__ == '__main__':
-    print("=" * 50)
-    print("  Binance CopyTrade Monitor")
-    print("  http://localhost:5000")
-    print("=" * 50)
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+@app.route('/api/debug')
+def debug():
+    positions = get_leaderboard_positions()
+    return jsonify({
+        "total": len(positions),
+        "positions": list(positions.values())
+    })
 
 @app.route('/api/myip')
 def myip():
     import urllib.request
     ip = urllib.request.urlopen('https://api.ipify.org').read().decode()
     return jsonify({"ip": ip})
-    
-@app.route('/api/debug')
-def debug():
-    try:
-        client = get_client()
-        # Coba ambil semua posisi termasuk yang size 0
-        positions = client.futures_position_information()
-        account = client.futures_account()
-        return jsonify({
-            "total_positions": len(positions),
-            "active": [p for p in positions if float(p['positionAmt']) != 0],
-            "totalWalletBalance": account.get('totalWalletBalance'),
-            "totalUnrealizedProfit": account.get('totalUnrealizedProfit')
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)})
 
-@app.route('/api/copytrade')
-def copytrade():
-    try:
-        client = get_client()
-        # Coba endpoint portfolio margin / copytrading
-        result = client._request_futures_api(
-            'get', 'copyTrading/futures/position', True
-        )
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)})
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    print("=" * 50)
+    print("  Binance CopyTrade Monitor")
+    print(f"  http://0.0.0.0:{port}")
+    print("=" * 50)
+    app.run(host='0.0.0.0', port=port, debug=False)
