@@ -222,9 +222,18 @@ def copytrade():
         result = client._request_futures_api(
             'get', 'copyTrading/futures/position', True
         )
-        return jsonify(result)
+        return jsonify({"raw": result})
     except Exception as e:
-        return jsonify({"error": str(e)})
+        try:
+            result2 = client._request_margin_api(
+                'get', 'copyTrading/futures/position', True
+            )
+            return jsonify({"raw2": result2})
+        except Exception as e2:
+            return jsonify({
+                "error1": str(e),
+                "error2": str(e2)
+            })
 
 
 @app.route('/api/debug')
