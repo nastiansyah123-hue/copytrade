@@ -229,3 +229,10 @@ if __name__ == '__main__':
     print("=" * 50)
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
+@app.route('/api/myip')
+def myip():
+    import urllib.request
+    ip = urllib.request.urlopen('https://api.ipify.org').read().decode()
+    return jsonify({"ip": ip})
+    
