@@ -230,7 +230,7 @@ def copytrade():
             hashlib.sha256
         ).hexdigest()
         
-        url = f"https://api.binance.com/sapi/v1/copyTrading/futures/position?{params}&signature={signature}"
+        url = f"https://api.binance.com/sapi/v2/copyTrading/futures/position?{params}&signature={signature}"
         headers = {"X-MBX-APIKEY": api_key}
         r = requests.get(url, headers=headers, timeout=10)
         return jsonify({"status": r.status_code, "raw": r.text})
