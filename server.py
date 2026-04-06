@@ -218,23 +218,24 @@ def config():
 @app.route('/api/copytrade')
 def copytrade():
     try:
-        client = get_client()
-        result = client._request_futures_api(
-            'get', 'copyTrading/futures/position', True
-        )
-        return jsonify({"raw": result})
+        import hmac, hashlib, time
+        api_key = CONFIG['binance_api_key']
+        secret = CONFIG['binance_secret']
+        
+        timestamp = int(time.time() * 1000)
+        params = f"timestamp={timestamp}"
+        signature = hmac.new(
+            secret.encode('utf-8'),
+            params.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
+        
+        url = f"https://fapi.binance.com/sapi/v1/copyTrading/futures/position?{params}&signature={signature}"
+        headers = {"X-MBX-APIKEY": api_key}
+        r = requests.get(url, headers=headers, timeout=10)
+        return jsonify({"status": r.status_code, "raw": r.text})
     except Exception as e:
-        try:
-            result2 = client._request_margin_api(
-                'get', 'copyTrading/futures/position', True
-            )
-            return jsonify({"raw2": result2})
-        except Exception as e2:
-            return jsonify({
-                "error1": str(e),
-                "error2": str(e2)
-            })
-
+        return jsonify({"error": str(e)})
 
 @app.route('/api/debug')
 def debug():
