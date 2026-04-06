@@ -224,11 +224,29 @@ def test_telegram():
 
 @app.route('/api/debug')
 def debug():
-    positions = get_copy_positions()
-    return jsonify({
-        "total": len(positions),
-        "positions": list(positions.values())
-    })
+    try:
+        # Step 1: cek portfolio
+        url1 = "https://www.binance.com/bapi/futures/v1/private/future/copy-trade/copy-portfolio/detail-list?ongoing=true"
+        r1 = requests.get(url1, headers=get_headers(), timeout=15)
+        data1 = r1.json()
+
+        if not data1.get("data"):
+            return jsonify({"step": 1, "error": "tidak ada portfolio", "raw": data1})
+
+        portfolio_id = data1["data"][0].get("copyPortfolioId", "")
+
+        # Step 2: cek posisi
+        url2 = "https://www.binance.com/bapi/futures/v6/private/future/user-data/user-position"
+        r2 = requests.post(url2, json={"portfolioId": portfolio_id}, headers=get_headers(), timeout=15)
+        data2 = r2.json()
+
+        return jsonify({
+            "step": 2,
+            "portfolio_id": portfolio_id,
+            "raw": data2
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 @app.route('/api/myip')
 def myip():
