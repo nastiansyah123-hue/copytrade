@@ -242,3 +242,18 @@ def myip():
     ip = urllib.request.urlopen('https://api.ipify.org').read().decode()
     return jsonify({"ip": ip})
     
+@app.route('/api/debug')
+def debug():
+    try:
+        client = get_client()
+        # Coba ambil semua posisi termasuk yang size 0
+        positions = client.futures_position_information()
+        account = client.futures_account()
+        return jsonify({
+            "total_positions": len(positions),
+            "active": [p for p in positions if float(p['positionAmt']) != 0],
+            "totalWalletBalance": account.get('totalWalletBalance'),
+            "totalUnrealizedProfit": account.get('totalUnrealizedProfit')
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
